@@ -49,14 +49,16 @@ const startServer = async () => {
     if (!isDemoMode()) {
       await seedDatabase();
     }
-
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
   } catch (error) {
-    console.error('Fatal: Server startup aborted due to MongoDB connection failure.');
-    process.exit(1);
+    console.warn('Startup notice:', error.message);
   }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`===============================================`);
+    console.log(`  Library Management System Server Running     `);
+    console.log(`  Port: ${PORT} | Demo Mode: ${isDemoMode()}   `);
+    console.log(`===============================================`);
+  });
 };
 
 startServer();
