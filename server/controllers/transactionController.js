@@ -1,145 +1,163 @@
-import Transaction from '../models/Transaction.js';
 import Book from '../models/Book.js';
 import Member from '../models/Member.js';
+import Transaction from '../models/Transaction.js';
+import { isDemoMode } from '../config/db.js';
+import { addDemoTransaction, getDemoBooks, getDemoMembers, getDemoTransactions, updateDemoBook, updateDemoTransaction } from '../config/demoStore.js';
 
-// @desc    Get all transactions
-// @route   GET /api/transactions
 export const getTransactions = async (req, res) => {
   try {
-    const { status } = req.query;
-    let query = {};
-    if (status && status !== 'All') {
-      query.status = status;
+    if (isDemoMode()) {
+      const transactions = getDemoTransactions().map((transaction) => ({
+        ...transaction,
+        bookId: getDemoBooks().find((book) => book._id === transaction.bookId) || null,
+        memberId: getDemoMembers().find((member) => member._id === transaction.memberId) || null,
+      }));
+      return res.json(transactions.sort((a, b) => new Date(b.issueDate) - new Date(a.issueDate)));
     }
 
-    const transactions = await Transaction.find(query)
-      .populate('bookId', 'title author isbn category')
-      .populate('memberId', 'name email phone')
+    const transactions = await Transaction.find()
+      .populate('bookId', 'title author')
+      .populate('memberId', 'name email memberId')
       .sort({ createdAt: -1 });
 
-    res.status(200).json({
-      success: true,
-      count: transactions.length,
-      data: transactions,
-    });
+    res.json(transactions);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to fetch transactions', error: error.message });
   }
 };
 
-// @desc    Issue a book to a member
-// @route   POST /api/transactions/issue
 export const issueBook = async (req, res) => {
   try {
-    const { bookId, memberId } = req.body;
+    const { bookId, memberId, dueDate } = req.body;
 
     if (!bookId || !memberId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide both book ID and member ID',
+      return res.status(400).json({ message: 'Book and member are required.' });
+    }
+
+    if (isDemoMode()) {
+      const book = getDemoBooks().find((item) => item._id === bookId);
+      const member = getDemoMembers().find((item) => item._id === memberId);
+
+      if (!book || !member) {
+        return res.status(404).json({ message: 'Book or member not found.' });
+      }
+
+      if (book.availableQuantity < 1) {
+        return res.status(400).json({ message: 'No copies of this book are available to issue.' });
+      }
+
+      const normalizedDueDate = dueDate ? new Date(dueDate) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      if (Number.isNaN(normalizedDueDate.getTime())) {
+        return res.status(400).json({ message: 'Please provide a valid due date.' });
+      }
+
+      const transaction = addDemoTransaction({
+        bookId,
+        memberId,
+        issueDate: new Date().toISOString(),
+        dueDate: normalizedDueDate.toISOString(),
+        returnDate: null,
+        status: 'issued',
       });
+
+      updateDemoBook(book._id, {
+        availableQuantity: Number(book.availableQuantity) - 1,
+      });
+
+      return res.status(201).json({ message: 'Book issued successfully.', transaction });
     }
 
-    // 1. Verify Member exists
-    const member = await Member.findById(memberId);
-    if (!member) {
-      return res.status(404).json({ success: false, message: 'Member not found' });
-    }
-
-    // 2. Verify Book exists
     const book = await Book.findById(bookId);
-    if (!book) {
-      return res.status(404).json({ success: false, message: 'Book not found' });
+    const member = await Member.findById(memberId);
+
+    if (!book || !member) {
+      return res.status(404).json({ message: 'Book or member not found.' });
     }
 
-    // 3. Check availability
-    if (book.availableQuantity <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Book "${book.title}" is currently out of stock (0 copies available).`,
-      });
+    if (book.availableQuantity < 1) {
+      return res.status(400).json({ message: 'No copies of this book are available to issue.' });
     }
 
-    // 4. Check if member already has an active issue of this same book
-    const existingActiveIssue = await Transaction.findOne({
-      bookId: book._id,
-      memberId: member._id,
-      status: 'Issued',
+    const normalizedDueDate = dueDate ? new Date(dueDate) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
+    if (Number.isNaN(normalizedDueDate.getTime())) {
+      return res.status(400).json({ message: 'Please provide a valid due date.' });
+    }
+
+    const transaction = await Transaction.create({
+      bookId,
+      memberId,
+      issueDate: new Date(),
+      dueDate: normalizedDueDate,
+      status: 'issued',
     });
-    if (existingActiveIssue) {
-      return res.status(400).json({
-        success: false,
-        message: `Member "${member.name}" already has an active copy of "${book.title}" issued.`,
-      });
-    }
 
-    // 5. Decrement book availableQuantity
     book.availableQuantity -= 1;
     await book.save();
 
-    // 6. Create transaction record
-    const transaction = await Transaction.create({
-      bookId: book._id,
-      memberId: member._id,
-      issueDate: new Date(),
-      status: 'Issued',
-    });
-
-    const populatedTransaction = await Transaction.findById(transaction._id)
-      .populate('bookId', 'title author isbn category')
-      .populate('memberId', 'name email phone');
-
     res.status(201).json({
-      success: true,
-      data: populatedTransaction,
-      message: `Book "${book.title}" successfully issued to ${member.name}!`,
+      message: 'Book issued successfully.',
+      transaction,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to issue book', error: error.message });
   }
 };
 
-// @desc    Return an issued book
-// @route   PUT /api/transactions/:id/return
 export const returnBook = async (req, res) => {
   try {
+    if (isDemoMode()) {
+      const transactions = getDemoTransactions();
+      const transaction = transactions.find((item) => item._id === req.params.id);
+
+      if (!transaction) {
+        return res.status(404).json({ message: 'Transaction not found.' });
+      }
+
+      if (transaction.status === 'returned') {
+        return res.status(400).json({ message: 'This book has already been returned.' });
+      }
+
+      const updatedTransaction = updateDemoTransaction(req.params.id, {
+        returnDate: new Date().toISOString(),
+        status: 'returned',
+      });
+
+      const book = getDemoBooks().find((item) => item._id === transaction.bookId);
+      if (book) {
+        updateDemoBook(book._id, {
+          availableQuantity: Number(book.availableQuantity) + 1,
+        });
+      }
+
+      return res.json({ message: 'Book returned successfully.', transaction: updatedTransaction });
+    }
+
     const transaction = await Transaction.findById(req.params.id);
+
     if (!transaction) {
-      return res.status(404).json({
-        success: false,
-        message: 'Transaction record not found',
-      });
+      return res.status(404).json({ message: 'Transaction not found.' });
     }
 
-    if (transaction.status === 'Returned') {
-      return res.status(400).json({
-        success: false,
-        message: 'This book has already been marked as returned',
-      });
+    if (transaction.status === 'returned') {
+      return res.status(400).json({ message: 'This book has already been returned.' });
     }
 
-    // Update transaction
-    transaction.status = 'Returned';
     transaction.returnDate = new Date();
+    transaction.status = 'returned';
     await transaction.save();
 
-    // Increment book's available quantity
     const book = await Book.findById(transaction.bookId);
     if (book) {
-      book.availableQuantity = Math.min(book.quantity, book.availableQuantity + 1);
+      book.availableQuantity += 1;
       await book.save();
     }
 
-    const populatedTransaction = await Transaction.findById(transaction._id)
-      .populate('bookId', 'title author isbn category')
-      .populate('memberId', 'name email phone');
-
-    res.status(200).json({
-      success: true,
-      data: populatedTransaction,
-      message: `Book successfully recorded as returned!`,
+    res.json({
+      message: 'Book returned successfully.',
+      transaction,
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to return book', error: error.message });
   }
 };

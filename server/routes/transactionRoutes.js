@@ -1,19 +1,10 @@
 import express from 'express';
-import {
-  getTransactions,
-  issueBook,
-  returnBook,
-} from '../controllers/transactionController.js';
+import { getTransactions, issueBook, returnBook } from '../controllers/transactionController.js';
 
 const router = express.Router();
 
-router.route('/')
-  .get(getTransactions);
-
-router.route('/issue')
-  .post(issueBook);
-
-router.route('/:id/return')
-  .put(returnBook);
+router.get('/', getTransactions);
+router.post('/issue', issueBook);
+router.put('/:id/return', returnBook);
 
 export default router;

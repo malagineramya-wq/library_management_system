@@ -1,20 +1,27 @@
 {
-  "name": "server",
+  "name": "library-management-server",
   "version": "1.0.0",
-  "description": "Library Management System - Backend API",
+  "description": "Backend API for the Library Management System",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "nodemon --watch . --ignore node_modules --ignore package-lock.json --ignore .git server.js",
+    "seed": "node -e \"import('./config/seed.js').then(async m => { const connectDB = (await import('./config/db.js')).default; await connectDB(); await m.seedDatabase(); process.exit(0); })\""
   },
+  "keywords": [
+    "library",
+    "mern",
+    "express",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.4.5",
     "express": "^4.21.2",
-    "mongoose": "^8.9.5"
-  },
-  "devDependencies": {
-    "mongodb-memory-server": "^10.1.4"
+    "mongoose": "^8.8.0",
+    "nodemon": "^3.1.9"
   }
 }

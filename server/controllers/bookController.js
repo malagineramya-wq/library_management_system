@@ -1,171 +1,132 @@
 import Book from '../models/Book.js';
-import Transaction from '../models/Transaction.js';
+import { isDemoMode } from '../config/db.js';
+import { addDemoBook, deleteDemoBook, getDemoBooks, updateDemoBook } from '../config/demoStore.js';
 
-// @desc    Get all books (with optional search and category filter)
-// @route   GET /api/books
 export const getBooks = async (req, res) => {
   try {
-    const { search, category } = req.query;
-    let query = {};
-
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { author: { $regex: search, $options: 'i' } },
-        { isbn: { $regex: search, $options: 'i' } },
-      ];
+    if (isDemoMode()) {
+      return res.json(getDemoBooks());
     }
 
-    if (category && category !== 'All') {
-      query.category = category;
-    }
-
-    const books = await Book.find(query).sort({ createdAt: -1 });
-    res.status(200).json({ success: true, count: books.length, data: books });
+    const books = await Book.find().sort({ createdAt: -1 });
+    res.json(books);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to fetch books', error: error.message });
   }
 };
 
-// @desc    Get single book by ID
-// @route   GET /api/books/:id
-export const getBookById = async (req, res) => {
-  try {
-    const book = await Book.findById(req.params.id);
-    if (!book) {
-      return res.status(404).json({ success: false, message: 'Book not found' });
-    }
-    res.status(200).json({ success: true, data: book });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Add a new book
-// @route   POST /api/books
-export const addBook = async (req, res) => {
+export const createBook = async (req, res) => {
   try {
     const { title, author, category, isbn, quantity } = req.body;
 
-    if (!title || !author || !category || !isbn) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide title, author, category, and ISBN',
+    if (!title || !author || !category || !isbn || !quantity) {
+      return res.status(400).json({ message: 'Please provide all required book fields.' });
+    }
+
+    if (isDemoMode()) {
+      const existingBook = getDemoBooks().find((book) => book.isbn.trim() === isbn.trim());
+      if (existingBook) {
+        return res.status(400).json({ message: 'A book with this ISBN already exists.' });
+      }
+
+      const newBook = addDemoBook({
+        title: title.trim(),
+        author: author.trim(),
+        category: category.trim(),
+        isbn: isbn.trim(),
+        quantity: Number(quantity),
+        availableQuantity: Number(quantity),
       });
+
+      return res.status(201).json(newBook);
     }
 
     const existingBook = await Book.findOne({ isbn: isbn.trim() });
     if (existingBook) {
-      return res.status(400).json({
-        success: false,
-        message: 'A book with this ISBN already exists',
-      });
+      return res.status(400).json({ message: 'A book with this ISBN already exists.' });
     }
 
-    const qty = quantity !== undefined ? Number(quantity) : 1;
-    if (isNaN(qty) || qty < 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Quantity must be a valid positive number',
-      });
-    }
-
-    const book = await Book.create({
+    const newBook = await Book.create({
       title: title.trim(),
       author: author.trim(),
       category: category.trim(),
       isbn: isbn.trim(),
-      quantity: qty,
-      availableQuantity: qty,
+      quantity: Number(quantity),
+      availableQuantity: Number(quantity),
     });
 
-    res.status(201).json({ success: true, data: book, message: 'Book added successfully' });
+    res.status(201).json(newBook);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to create book', error: error.message });
   }
 };
 
-// @desc    Update book details
-// @route   PUT /api/books/:id
 export const updateBook = async (req, res) => {
   try {
-    const book = await Book.findById(req.params.id);
-    if (!book) {
-      return res.status(404).json({ success: false, message: 'Book not found' });
+    const { title, author, category, isbn, quantity, availableQuantity } = req.body;
+
+    if (isDemoMode()) {
+      const book = getDemoBooks().find((item) => item._id === req.params.id);
+      if (!book) {
+        return res.status(404).json({ message: 'Book not found.' });
+      }
+
+      const updatedBook = updateDemoBook(req.params.id, {
+        title: title ? title.trim() : book.title,
+        author: author ? author.trim() : book.author,
+        category: category ? category.trim() : book.category,
+        isbn: isbn ? isbn.trim() : book.isbn,
+        quantity: quantity !== undefined ? Number(quantity) : book.quantity,
+        availableQuantity: availableQuantity !== undefined ? Number(availableQuantity) : book.availableQuantity,
+      });
+
+      return res.json(updatedBook);
     }
 
-    const { title, author, category, isbn, quantity } = req.body;
+    const book = await Book.findById(req.params.id);
 
-    // Check if ISBN is being changed and is already used by another book
-    if (isbn && isbn.trim() !== book.isbn) {
-      const existing = await Book.findOne({ isbn: isbn.trim() });
-      if (existing) {
-        return res.status(400).json({
-          success: false,
-          message: 'Another book with this ISBN already exists',
-        });
-      }
-      book.isbn = isbn.trim();
+    if (!book) {
+      return res.status(404).json({ message: 'Book not found.' });
     }
 
     if (title) book.title = title.trim();
     if (author) book.author = author.trim();
     if (category) book.category = category.trim();
-
+    if (isbn) book.isbn = isbn.trim();
     if (quantity !== undefined) {
-      const newQty = Number(quantity);
-      if (isNaN(newQty) || newQty < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Quantity must be a valid non-negative number',
-        });
-      }
-
-      // Calculate actively issued count
-      const issuedCount = book.quantity - book.availableQuantity;
-      if (newQty < issuedCount) {
-        return res.status(400).json({
-          success: false,
-          message: `Cannot set total quantity to ${newQty}. There are currently ${issuedCount} copy(ies) issued out.`,
-        });
-      }
-
-      book.availableQuantity = newQty - issuedCount;
-      book.quantity = newQty;
+      const diff = Number(quantity) - book.quantity;
+      book.quantity = Number(quantity);
+      book.availableQuantity = Math.max(0, Math.min(book.availableQuantity + diff, Number(quantity)));
+    }
+    if (availableQuantity !== undefined) {
+      book.availableQuantity = Math.max(0, Math.min(Number(availableQuantity), book.quantity));
     }
 
     await book.save();
-    res.status(200).json({ success: true, data: book, message: 'Book updated successfully' });
+    res.json(book);
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to update book', error: error.message });
   }
 };
 
-// @desc    Delete a book
-// @route   DELETE /api/books/:id
 export const deleteBook = async (req, res) => {
   try {
-    const book = await Book.findById(req.params.id);
+    if (isDemoMode()) {
+      const removed = deleteDemoBook(req.params.id);
+      if (!removed) {
+        return res.status(404).json({ message: 'Book not found.' });
+      }
+      return res.json({ message: 'Book deleted successfully.' });
+    }
+
+    const book = await Book.findByIdAndDelete(req.params.id);
+
     if (!book) {
-      return res.status(404).json({ success: false, message: 'Book not found' });
+      return res.status(404).json({ message: 'Book not found.' });
     }
 
-    // Check if any copies are currently issued
-    const activeIssue = await Transaction.findOne({
-      bookId: book._id,
-      status: 'Issued',
-    });
-
-    if (activeIssue) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete book while copies are currently issued out. Please record returns first.',
-      });
-    }
-
-    await Book.findByIdAndDelete(req.params.id);
-    res.status(200).json({ success: true, message: 'Book deleted successfully' });
+    res.json({ message: 'Book deleted successfully.' });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to delete book', error: error.message });
   }
 };

@@ -1,25 +1,28 @@
 import mongoose from 'mongoose';
-import { isMongoConnected } from '../config/db.js';
-import { fallbackMembers } from '../config/localStore.js';
 
 const memberSchema = new mongoose.Schema(
   {
+    memberId: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
     name: {
       type: String,
-      required: [true, 'Member name is required'],
+      required: true,
       trim: true,
     },
     email: {
       type: String,
-      required: [true, 'Email is required'],
+      required: true,
       unique: true,
-      trim: true,
       lowercase: true,
-      match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email address'],
+      trim: true,
     },
     phone: {
       type: String,
-      required: [true, 'Phone number is required'],
+      required: true,
       trim: true,
     },
     membershipDate: {
@@ -32,21 +35,6 @@ const memberSchema = new mongoose.Schema(
   }
 );
 
-const MongooseMember = mongoose.model('Member', memberSchema);
+const Member = mongoose.model('Member', memberSchema);
 
-const MemberProxy = new Proxy(MongooseMember, {
-  get(target, prop) {
-    if (isMongoConnected) {
-      return target[prop];
-    }
-    if (prop in fallbackMembers) {
-      return typeof fallbackMembers[prop] === 'function'
-        ? fallbackMembers[prop].bind(fallbackMembers)
-        : fallbackMembers[prop];
-    }
-    return target[prop];
-  },
-});
-
-export default MemberProxy;
-export { MongooseMember as Member };
+export default Member;
